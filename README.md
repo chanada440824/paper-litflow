@@ -39,7 +39,7 @@ python cli.py analyze \
   --pdf-dir "文献/第2章文献" \
   --output "第二章文献综述_归类.xlsx" \
   --sections-file examples/sections.example.json \
-  --topic "基于建构主义学习空间的研究"
+  --topic "你的论文主题"
 ```
 
 ### 2. organize — 按 Excel 归类结果复制 PDF 到章节目录
@@ -55,8 +55,8 @@ python cli.py organize \
 
 ```
 文献/已归类/
-└── 2.1 绪论与理论基础/
-    └── 2.1.1 学习空间研究的历史演进/
+└── 2.1 绪论与文献综述/
+    └── 2.1.1 研究背景与问题提出/
         ├── 作者A - 2020 - 标题.pdf
         └── 作者B - 2021 - 标题.pdf
 ```
@@ -69,15 +69,15 @@ python cli.py extract \
   --output-root "文献/摘抄" \
   --chapters "2.1,2.2,2.3" \
   --sections-file examples/sections.example.json \
-  --topic "基于建构主义学习空间的研究"
+  --topic "你的论文主题"
 ```
 
 摘抄格式：每条原文用引用块，紧跟**用途**说明（标注用于哪个小节的哪句论证），条目间 `---` 分隔：
 
 ```markdown
-> 学习空间的概念经历了从实体空间到虚实融合空间的演变。
+> 近年来，相关领域的研究重心逐渐从单一方法探索转向多方法融合与协同应用。
 
-**用途**：用于 2.1.2 从实体空间到虚实融合空间 的具体引用，说明概念演进脉络。
+**用途**：用于 2.1.1 研究背景与问题提出 的具体引用，说明研究演进脉络。
 ```
 
 ### 4. export — 摘抄导出为 Word
