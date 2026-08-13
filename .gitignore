@@ -1,0 +1,21 @@
+# 密钥与本地配置
+.env
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# 输出文件（论文资料夹建议不入库）
+*.xlsx
+output/
+tmp/
+
+# IDE
+.idea/
+.vscode/
