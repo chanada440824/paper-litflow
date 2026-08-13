@@ -47,7 +47,7 @@ def parse_json_response(response_text: str):
         return json.loads(response_text)
     except json.JSONDecodeError:
         cleaned = re.sub(r"^```json\s*", "", response_text)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
         try:
             return json.loads(cleaned)
         except Exception:

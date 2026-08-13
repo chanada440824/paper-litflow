@@ -49,19 +49,17 @@ def parse_md_file(md_path: str):
 
 
 def parse_list_style(text: str):
+    """逐行扫描列表式摘抄: '- **原文内容**：' 与 '- **用途**：' 配对, 允许空行分隔。"""
     entries = []
-    for para in re.split(r"\n\s*\n", text):
-        if not para.strip():
-            continue
-        original, usage = None, None
-        for line in para.strip().split("\n"):
-            line = line.strip()
-            if line.startswith("- **原文内容**："):
-                original = line.replace("- **原文内容**：", "").strip()
-            elif line.startswith("- **用途**："):
-                usage = line.replace("- **用途**：", "").strip()
-        if original and usage:
-            entries.append((original, usage))
+    original = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("- **原文内容**："):
+            original = line.replace("- **原文内容**：", "").strip()
+        elif line.startswith("- **用途**："):
+            if original:
+                entries.append((original, line.replace("- **用途**：", "").strip()))
+            original = None
     return entries
 
 

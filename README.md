@@ -1,5 +1,7 @@
 # paper-litflow — 文献综述自动化流水线
 
+![tests](https://github.com/chanada440824/paper-litflow/actions/workflows/test.yml/badge.svg)
+
 把「读 PDF → 按论文章节归类 → 摘抄原文 → 排版成 Word」这条文献综述流水线做成一个命令行工具。
 
 > 作者用它把每篇文献的处理时间从约 20 分钟缩短到 2 分钟以内（配合 DeepSeek API）。
@@ -11,6 +13,32 @@
 │ PDF 文件夹 │ ──────────▶ │ Excel 归类 │ ─────────▶ │ 章节目录 PDF  │ ─────────▶ │ 摘抄 Markdown │ ────────▶ │ Word 文档 │
 └──────────┘             └──────────┘            └─────────────┘           └─────────┘          └────────┘
 ```
+
+## 模块结构
+
+```
+paper-litflow
+├── cli.py                    # 入口: analyze / organize / extract / export 子命令
+├── paper_litflow/
+│   ├── config.py             # 章节配置 JSON 加载（含 BOM 兼容）+ API key 读取（.env）
+│   ├── pdf_utils.py          # PDF 文本提取 + 文件名元数据解析（作者-年份-标题）
+│   ├── analyze.py            # analyze: 批量分析 → Excel（含模型 JSON 容错解析）
+│   ├── organize.py           # organize: 按章节归类复制 PDF
+│   ├── extract.py            # extract: 章节化摘抄 → Markdown（含格式约束 prompt）
+│   └── export_docx.py        # export: Markdown → 宋体排版 Word
+├── tests/                    # pytest 单元测试（42 个用例, CI 自动运行）
+└── examples/
+    └── sections.example.json # 章节配置示例
+```
+
+## 测试
+
+```bash
+pip install pytest
+pytest
+```
+
+每次推送到 GitHub 都会由 CI（GitHub Actions, Python 3.10-3.12）自动运行全部测试。
 
 | 步骤 | 命令 | 输入 → 输出 |
 |------|------|-------------|
