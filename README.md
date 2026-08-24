@@ -150,6 +150,34 @@ paper-litflow/
 
 `skill/literature-review/` 是一个 Agentskills 标准的 skill，让 AI 编程助手（OpenCode / Claude Code / Codex 等）能直接驱动本流水线——说一句「帮我跑第二章文献综述」即可。
 
+### extract-v2 —— 带页码与置信度的摘抄（推荐）
+
+```bash
+python cli.py extract-v2 \
+  --pdf-root "文献/已归类" \
+  --output-root "文献/摘抄" \
+  --chapters "2.1,2.2" \
+  --sections-file examples/sections.example.json \
+  --keywords-file examples/keywords.json \
+  --topic "你的论文主题"
+```
+
+相比 v1 的升级：文本按页注入【P页码】标记（模型必须回报出处页）；可选关键词预检（未命中小节关键词的 PDF 直接跳过，省 token）；返回严格 JSON 后**本地逐字校验**，转述/幻觉引文直接淘汰；模糊命中降级为低/中置信；`state.json` 断点续跑。
+
+### from-list —— 从筛选清单直接建目录（跳过 analyze/organize）
+
+```bash
+python cli.py from-list \
+  --list-file "相关文献筛选.xlsx" \
+  --pdf-index pdf_index.json \
+  --target-root "文献/已归类" \
+  --grades "A,B" \
+  --links-json zotero_links.json \
+  --list-out "文献清单.md"
+```
+
+`--list-file` 需含「标题 / 相关小节 / 等级」三列；`--pdf-index` 为 `[{"标题":..., "path":...}]` 的标题→PDF 路径映射。加 `--skip-copy` 可不复制 PDF、只产出带 Zotero 跳转链接的清单（链接制交付）。
+
 ### 安装 skill
 
 ```bash

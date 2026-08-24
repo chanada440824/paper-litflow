@@ -91,13 +91,46 @@ def analyze_pdf(client, pdf_path: str, filename: str, prompt: str, sections: dic
         return None
 
 
+def file_key(path: str) -> str:
+    """文件指纹: 路径+大小+mtime 的 md5, 用于增量跳过未变化的 PDF。"""
+    import hashlib
+    st = os.stat(path)
+    raw = f"{os.path.abspath(path)}|{st.st_size}|{st.st_mtime_ns}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def collect_pdfs(pdf_dir: str, recursive: bool = False):
+    """收集 PDF 列表; recursive 时遍历子目录。"""
+    if not recursive:
+        return [f for f in os.listdir(pdf_dir) if f.lower().endswith(".pdf")]
+    found = []
+    for root, _, files in os.walk(pdf_dir):
+        for f in files:
+            if f.lower().endswith(".pdf"):
+                found.append(os.path.relpath(os.path.join(root, f), pdf_dir))
+    return sorted(found)
+
+
+def load_state(output: str) -> dict:
+    state_path = output + ".state.json"
+    if os.path.exists(state_path):
+        with open(state_path, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_state(output: str, state: dict):
+    with open(output + ".state.json", "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False)
+
+
 def run(args) -> int:
     if not os.path.exists(args.pdf_dir):
         print(f"文件夹不存在: {args.pdf_dir}")
         return 1
 
     sections = config.load_sections(args.sections_file)
-    pdf_files = [f for f in os.listdir(args.pdf_dir) if f.lower().endswith(".pdf")]
+    pdf_files = collect_pdfs(args.pdf_dir, getattr(args, "recursive", False))
     if not pdf_files:
         print("未找到 PDF 文件")
         return 1
@@ -106,21 +139,35 @@ def run(args) -> int:
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
     prompt = build_prompt(sections, args.topic)
 
-    print(f"找到 {len(pdf_files)} 篇 PDF")
+    # 增量模式: 输出旁的 state.json 记录已分析文件的指纹与结果行
+    state = load_state(args.output) if getattr(args, "incremental", False) else {}
+
+    print(f"找到 {len(pdf_files)} 篇 PDF (已分析 {len(state)} 篇可复用)")
     results = []
+    skipped_cache = 0
     for idx, filename in enumerate(tqdm(pdf_files, desc="批量分析"), 1):
+        full_path = os.path.join(args.pdf_dir, filename)
+        key = file_key(full_path)
         print(f"\n[{idx}/{len(pdf_files)}] {filename}")
-        row_data = analyze_pdf(
-            client,
-            os.path.join(args.pdf_dir, filename),
-            filename,
-            prompt,
-            sections,
-            args.temperature,
-            args.model,
-        )
+        if key in state:
+            row_data = state[key]
+            skipped_cache += 1
+            print("  增量命中, 复用既有结果")
+        else:
+            row_data = analyze_pdf(
+                client,
+                full_path,
+                os.path.basename(filename),
+                prompt,
+                sections,
+                args.temperature,
+                args.model,
+            )
+            if row_data:
+                state[key] = row_data
+                save_state(args.output, state)
         if row_data:
-            row_data["序号"] = idx
+            row_data["序号"] = len(results) + 1
             results.append(row_data)
         else:
             print(f"  跳过 {filename}")
@@ -131,7 +178,7 @@ def run(args) -> int:
         cols = ["序号", "标题", "作者", "年份", "文献摘要", "关键词"] + list(sections.keys())
         df = df[cols]
         df.to_excel(args.output, index=False)
-        print(f"\n完成, 结果已保存: {args.output}")
+        print(f"\n完成, 结果已保存: {args.output} (本次增量复用 {skipped_cache} 篇)")
     else:
         print("没有任何成功处理的结果")
     return 0
