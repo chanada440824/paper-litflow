@@ -1,11 +1,17 @@
-"""export 命令: 将摘抄 Markdown 目录导出为 Word 文档 (宋体、层级标题)。"""
+"""export 命令: 将摘抄 Markdown 目录导出为 Word 文档 (宋体、层级标题、置信度配色)。
 
+结构兼容两种布局:
+- 嵌套: md_root/2.1 xxx/2.1.1 xxx/文献.md
+- 扁平: md_root/2.1/文献.md  (extract-v2 产出)
+"""
+
+import json
 import os
 import re
 
 from docx import Document
 from docx.oxml.ns import qn
-from docx.shared import Inches
+from docx.shared import Inches, RGBColor
 
 
 def set_font_to_songti(paragraph):
@@ -22,8 +28,29 @@ def set_heading_font_to_songti(doc, level):
     style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
 
 
+def confidence_rgb(conf: str):
+    """置信度 -> 字体颜色。高=绿, 中=橙, 低=灰, 未知=黑。"""
+    c = (conf or "").strip()
+    if c == "高":
+        return RGBColor(0x00, 0xB0, 0x50)
+    if c == "中":
+        return RGBColor(0xED, 0x7D, 0x31)
+    if c == "低":
+        return RGBColor(0x80, 0x80, 0x80)
+    return RGBColor(0x00, 0x00, 0x00)
+
+
+_CONF_RE = re.compile(r"置信度[**：:].*?\[?(高|中|低)\]?")
+
+
+def extract_confidence(text: str) -> str:
+    """从 用途/出处 行提取置信度标签。"""
+    m = _CONF_RE.search(text or "")
+    return m.group(1) if m else ""
+
+
 def parse_md_file(md_path: str):
-    """解析摘抄 Markdown, 返回 [(原文, 用途), ...]。
+    """解析摘抄 Markdown, 返回 [(原文, 用途, 置信度), ...]。
 
     支持两种格式:
     1. 引用块格式: '> 原文' + '**用途**：...', 条目间以 '---' 分隔
@@ -39,9 +66,12 @@ def parse_md_file(md_path: str):
             block = block.strip()
             if not block:
                 continue
-            match = re.search(r"^>\s*(.*?)\n\s*\*\*用途\*\*：\s*(.*?)$", block, re.DOTALL | re.MULTILINE)
+            match = re.search(r"^>\s*(.*?)\n\s*(\*\*.*?)$", block, re.MULTILINE)
             if match:
-                entries.append((match.group(1).strip(), match.group(2).strip()))
+                quote = match.group(1).strip()
+                meta = match.group(2).strip()
+                usage = meta.split("**用途**：", 1)[1].strip() if "**用途**：" in meta else meta
+                entries.append((quote, usage, extract_confidence(meta)))
             elif "- **原文内容**：" in block:
                 entries.extend(parse_list_style(block))
         return entries
@@ -58,7 +88,8 @@ def parse_list_style(text: str):
             original = line.replace("- **原文内容**：", "").strip()
         elif line.startswith("- **用途**："):
             if original:
-                entries.append((original, line.replace("- **用途**：", "").strip()))
+                usage = line.replace("- **用途**：", "").strip()
+                entries.append((original, usage, extract_confidence(usage)))
             original = None
     return entries
 
@@ -66,6 +97,7 @@ def parse_list_style(text: str):
 def extract_author_year_title(filename_base: str):
     """从文件名 (去扩展名) 提取 (作者, 年份, 标题)。格式: '作者 - 2020 - 标题_28-77'"""
     base = re.sub(r"_\d+-\d+$", "", filename_base)
+    base = re.sub(r"\(\d+\)$", "", base).strip()
     parts = base.split(" - ")
     if len(parts) >= 3:
         return parts[0].strip(), parts[1].strip(), " - ".join(parts[2:]).strip()
@@ -74,71 +106,78 @@ def extract_author_year_title(filename_base: str):
     return "", "", base
 
 
-def generate_word_from_md(md_root: str, output_docx: str):
-    doc = Document()
+_NUM_CN = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
 
-    # 默认字体与标题字体设为宋体
+
+def _emit_file(doc, md_file, idx):
+    base = os.path.basename(md_file).replace(".md", "")
+    base = re.sub(r"\(\d+\)", "", base).strip()
+    author, year, pure_title = extract_author_year_title(base)
+    label = f"文献{_NUM_CN[idx - 1]}" if idx <= len(_NUM_CN) else f"文献{idx}"
+    if author and year:
+        heading_text = f"{label}·{author} ({year})·{pure_title}"
+    elif author:
+        heading_text = f"{label}·{author}·{pure_title}"
+    else:
+        heading_text = f"{label}·{pure_title}"
+    doc.add_heading(heading_text, level=3)
+
+    entries = parse_md_file(os.path.join(md_file))
+    if not entries:
+        doc.add_paragraph("（本节未提取到有效摘抄）")
+    for original, usage, conf in entries:
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Inches(0.5)
+        run = p.add_run(original)
+        run.italic = True
+        run.font.color.rgb = confidence_rgb(conf)
+        set_font_to_songti(p)
+        p_usage = doc.add_paragraph()
+        p_usage.add_run("用途：").bold = True
+        p_usage.add_run(usage)
+        set_font_to_songti(p_usage)
+        doc.add_paragraph("_" * 50)
+    doc.add_paragraph()
+
+
+def generate_word_from_md(md_root: str, output_docx: str, sections=None):
+    doc = Document()
+    sections = sections or {}
+
     style = doc.styles["Normal"]
     style.font.name = "宋体"
     style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
     for level in range(1, 4):
         set_heading_font_to_songti(doc, level)
 
-    # 读取一级章节目录 (如 '2. ' 开头)
-    chapters = [
+    chapters = sorted(
         d for d in os.listdir(md_root)
         if os.path.isdir(os.path.join(md_root, d)) and re.match(r"^2\.\d", d)
-    ]
-    chapters.sort()
+    )
 
-    num_cn = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
+    for ch in chapters:
+        code = ch.split(" ", 1)[0]
+        heading_text = sections.get(code, ch)
+        chapter_path = os.path.join(md_root, ch)
+        doc.add_heading(heading_text, level=1)
 
-    for chapter in chapters:
-        chapter_path = os.path.join(md_root, chapter)
-        sub_chapters = [
+        subdirs = sorted(
             d for d in os.listdir(chapter_path)
             if os.path.isdir(os.path.join(chapter_path, d)) and re.match(r"^2\.\d+\.\d+", d)
-        ]
-        sub_chapters.sort()
+        )
+        md_files = sorted(f for f in os.listdir(chapter_path) if f.endswith(".md"))
 
-        doc.add_heading(chapter, level=1)
-        for sub in sub_chapters:
-            sub_path = os.path.join(chapter_path, sub)
-            doc.add_heading(sub, level=2)
-
-            md_files = sorted(f for f in os.listdir(sub_path) if f.endswith(".md"))
-            if not md_files:
-                print(f"警告: {sub} 下没有 md 文件")
-                continue
-
-            for idx, md_file in enumerate(md_files, start=1):
-                label = f"文献{num_cn[idx-1]}" if idx <= len(num_cn) else f"文献{idx}"
-                base = re.sub(r"\(\d+\)", "", md_file.replace(".md", "")).strip()
-                author, year, pure_title = extract_author_year_title(base)
-
-                if author and year:
-                    heading_text = f"{label}·{author} ({year})·{pure_title}"
-                elif author:
-                    heading_text = f"{label}·{author}·{pure_title}"
-                else:
-                    heading_text = f"{label}·{pure_title}"
-                doc.add_heading(heading_text, level=3)
-
-                entries = parse_md_file(os.path.join(sub_path, md_file))
-                if not entries:
-                    print(f"  警告: {md_file} 未解析到任何摘抄条目")
-                for original, usage in entries:
-                    p = doc.add_paragraph()
-                    p.paragraph_format.left_indent = Inches(0.5)
-                    run = p.add_run(original)
-                    run.italic = True
-                    set_font_to_songti(p)
-                    p_usage = doc.add_paragraph()
-                    p_usage.add_run("用途：").bold = True
-                    p_usage.add_run(usage)
-                    set_font_to_songti(p_usage)
-                    doc.add_paragraph("_" * 50)
-                doc.add_paragraph()
+        if subdirs:
+            for sub in subdirs:
+                sub_path = os.path.join(chapter_path, sub)
+                doc.add_heading(sections.get(sub.split(" ", 1)[0], sub), level=2)
+                for i, mf in enumerate(sorted(f for f in os.listdir(sub_path) if f.endswith(".md")), 1):
+                    _emit_file(doc, os.path.join(sub_path, mf), i)
+        elif md_files:
+            for i, mf in enumerate(md_files, 1):
+                _emit_file(doc, os.path.join(chapter_path, mf), i)
+        else:
+            print(f"警告: {ch} 下没有子目录或 md 文件")
 
     doc.save(output_docx)
     print(f"Word 文档已生成: {output_docx}")
@@ -148,5 +187,9 @@ def run(args) -> int:
     if not os.path.exists(args.md_root):
         print(f"根目录不存在: {args.md_root}")
         return 1
-    generate_word_from_md(args.md_root, args.output)
+    sections = {}
+    if getattr(args, "sections_file", None):
+        with open(args.sections_file, encoding="utf-8-sig") as f:
+            sections = json.load(f)
+    generate_word_from_md(args.md_root, args.output, sections)
     return 0

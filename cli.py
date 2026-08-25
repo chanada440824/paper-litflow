@@ -99,6 +99,7 @@ def main() -> int:
     p_export = sub.add_parser("export", help="将摘抄 Markdown 目录导出为 Word 文档")
     p_export.add_argument("--md-root", required=True, help="Markdown 根目录 (extract 的输出)")
     p_export.add_argument("--output", required=True, help="输出 Word 文档路径")
+    p_export.add_argument("--sections-file", default=None, help="可选: 章节编号->标题 JSON {编号: 标题}, 美化 Word 层级标题")
     p_export.set_defaults(func=export_cmd.run)
 
     args = parser.parse_args()

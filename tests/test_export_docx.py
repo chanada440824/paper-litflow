@@ -34,8 +34,26 @@ def test_parse_md_quote_style(tmp_path):
     p = tmp_path / "a.md"
     p.write_text(QUOTE_MD, encoding="utf-8")
     assert parse_md_file(str(p)) == [
-        ("原文句子一。", "用于 2.1.1 的具体引用。"),
-        ("原文句子二。", "用于 2.1.2 的具体引用。"),
+        ("原文句子一。", "用于 2.1.1 的具体引用。", ""),
+        ("原文句子二。", "用于 2.1.2 的具体引用。", ""),
+    ]
+
+
+def test_parse_md_quote_confidence(tmp_path):
+    md = """> 高置信原文。
+
+**出处**：第3页｜**用途**：论证 A。｜**置信度**：[高]（exact）
+
+---
+> 中置信原文。
+
+**出处**：第4页｜**用途**：论证 B。｜**置信度**：[中]（fuzzy）
+"""
+    p = tmp_path / "c.md"
+    p.write_text(md, encoding="utf-8")
+    assert parse_md_file(str(p)) == [
+        ("高置信原文。", "论证 A。｜**置信度**：[高]（exact）", "高"),
+        ("中置信原文。", "论证 B。｜**置信度**：[中]（fuzzy）", "中"),
     ]
 
 
@@ -43,9 +61,18 @@ def test_parse_md_list_style(tmp_path):
     p = tmp_path / "b.md"
     p.write_text(LIST_MD, encoding="utf-8")
     assert parse_md_file(str(p)) == [
-        ("列表原文 A。", "用于 2.1 的引用。"),
-        ("列表原文 B。", "用于 2.2 的引用。"),
+        ("列表原文 A。", "用于 2.1 的引用。", ""),
+        ("列表原文 B。", "用于 2.2 的引用。", ""),
     ]
+
+
+def test_confidence_rgb():
+    from paper_litflow.export_docx import confidence_rgb
+    from docx.shared import RGBColor
+    assert confidence_rgb("高") == RGBColor(0x00, 0xB0, 0x50)
+    assert confidence_rgb("中") == RGBColor(0xED, 0x7D, 0x31)
+    assert confidence_rgb("低") == RGBColor(0x80, 0x80, 0x80)
+    assert confidence_rgb("") == RGBColor(0x00, 0x00, 0x00)
 
 
 def test_parse_list_style_missing_usage_skipped():
