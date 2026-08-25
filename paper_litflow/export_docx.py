@@ -59,23 +59,22 @@ def parse_md_file(md_path: str):
     with open(md_path, encoding="utf-8") as f:
         content = f.read()
 
-    if "---" in content:
-        blocks = re.split(r"\n---\s*\n", content)
-        entries = []
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
+    blocks = re.split(r"\n---\s*\n", content) if "---" in content else [content]
+    entries = []
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        if re.search(r"^>\s", block, re.MULTILINE):
             match = re.search(r"^>\s*(.*?)\n\s*(\*\*.*?)$", block, re.MULTILINE)
             if match:
                 quote = match.group(1).strip()
                 meta = match.group(2).strip()
                 usage = meta.split("**用途**：", 1)[1].strip() if "**用途**：" in meta else meta
                 entries.append((quote, usage, extract_confidence(meta)))
-            elif "- **原文内容**：" in block:
-                entries.extend(parse_list_style(block))
-        return entries
-    return parse_list_style(content)
+        elif "- **原文内容**：" in block:
+            entries.extend(parse_list_style(block))
+    return entries
 
 
 def parse_list_style(text: str):
@@ -134,10 +133,19 @@ def _emit_file(doc, md_file, idx):
         set_font_to_songti(p)
         p_usage = doc.add_paragraph()
         p_usage.add_run("用途：").bold = True
-        p_usage.add_run(usage)
+        add_md_bold_runs(p_usage, usage)
         set_font_to_songti(p_usage)
         doc.add_paragraph("_" * 50)
     doc.add_paragraph()
+
+
+def add_md_bold_runs(paragraph, text: str):
+    """把 '**加粗**' 段渲染为加粗 run, 去掉裸星号。"""
+    for i, seg in enumerate(re.split(r"\*\*(.+?)\*\*", text)):
+        if not seg:
+            continue
+        run = paragraph.add_run(seg)
+        run.bold = (i % 2 == 1)
 
 
 def generate_word_from_md(md_root: str, output_docx: str, sections=None):
@@ -150,34 +158,47 @@ def generate_word_from_md(md_root: str, output_docx: str, sections=None):
     for level in range(1, 4):
         set_heading_font_to_songti(doc, level)
 
-    chapters = sorted(
+    # 收集顶层 2.x 目录, 兼容 2.x / 2.x.y / 嵌套 2.x>2.x.y 三种布局
+    top_dirs = sorted(
         d for d in os.listdir(md_root)
         if os.path.isdir(os.path.join(md_root, d)) and re.match(r"^2\.\d", d)
     )
-
-    for ch in chapters:
-        code = ch.split(" ", 1)[0]
-        heading_text = sections.get(code, ch)
-        chapter_path = os.path.join(md_root, ch)
-        doc.add_heading(heading_text, level=1)
-
-        subdirs = sorted(
-            d for d in os.listdir(chapter_path)
-            if os.path.isdir(os.path.join(chapter_path, d)) and re.match(r"^2\.\d+\.\d+", d)
-        )
-        md_files = sorted(f for f in os.listdir(chapter_path) if f.endswith(".md"))
-
-        if subdirs:
-            for sub in subdirs:
-                sub_path = os.path.join(chapter_path, sub)
-                doc.add_heading(sections.get(sub.split(" ", 1)[0], sub), level=2)
-                for i, mf in enumerate(sorted(f for f in os.listdir(sub_path) if f.endswith(".md")), 1):
-                    _emit_file(doc, os.path.join(sub_path, mf), i)
-        elif md_files:
-            for i, mf in enumerate(md_files, 1):
-                _emit_file(doc, os.path.join(chapter_path, mf), i)
+    chapters = {}
+    for d in top_dirs:
+        code = d.split(" ", 1)[0]
+        path = os.path.join(md_root, d)
+        if code.count(".") == 1:
+            chapters.setdefault(code, {"path": path, "subs": [], "title": d})
         else:
-            print(f"警告: {ch} 下没有子目录或 md 文件")
+            parent = code.rsplit(".", 1)[0]
+            ch = chapters.setdefault(parent, {"path": None, "subs": [], "title": parent})
+            ch["subs"].append((code, path, d))
+    for code, ch in chapters.items():
+        ch["subs"].sort(key=lambda x: x[0])
+        if ch["path"]:
+            for d in sorted(os.listdir(ch["path"])):
+                p = os.path.join(ch["path"], d)
+                if os.path.isdir(p) and re.match(r"^2\.\d+\.\d+", d):
+                    scode = d.split(" ", 1)[0]
+                    if not any(s[0] == scode for s in ch["subs"]):
+                        ch["subs"].append((scode, p, d))
+        ch["subs"].sort(key=lambda x: x[0])
+
+    for code in sorted(chapters):
+        ch = chapters[code]
+        doc.add_heading(sections.get(code, ch["title"]), level=1)
+        direct_mds = sorted(f for f in os.listdir(ch["path"]) if f.endswith(".md")) if ch["path"] else []
+        if ch["subs"]:
+            for scode, sdir, sname in ch["subs"]:
+                doc.add_heading(sections.get(scode, sname), level=2)
+                mds = sorted(f for f in os.listdir(sdir) if f.endswith(".md"))
+                for i, mf in enumerate(mds, 1):
+                    _emit_file(doc, os.path.join(sdir, mf), i)
+        elif direct_mds:
+            for i, mf in enumerate(direct_mds, 1):
+                _emit_file(doc, os.path.join(ch["path"], mf), i)
+        else:
+            print(f"警告: {code} 无内容")
 
     doc.save(output_docx)
     print(f"Word 文档已生成: {output_docx}")

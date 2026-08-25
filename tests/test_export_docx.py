@@ -75,6 +75,34 @@ def test_confidence_rgb():
     assert confidence_rgb("") == RGBColor(0x00, 0x00, 0x00)
 
 
+def test_add_md_bold_runs_strips_asterisks():
+    from docx import Document
+    from paper_litflow.export_docx import add_md_bold_runs
+    doc = Document()
+    p = doc.add_paragraph()
+    add_md_bold_runs(p, "出处：第3页｜**置信度**：[高]（exact）")
+    assert "".join(r.text for r in p.runs) == "出处：第3页｜置信度：[高]（exact）"
+    assert [r.bold for r in p.runs] == [False, True, False]
+
+
+def test_generate_word_flat_2xy(tmp_path):
+    md_root = tmp_path / "md"
+    (md_root / "2.1.1 空间转变").mkdir(parents=True)
+    (md_root / "2.1.1 空间转变" / "张三 - 2020 - 标题.md").write_text(
+        """> 原文A。
+
+**出处**：第3页｜**用途**：论证。｜**置信度**：[高]（exact）
+""", encoding="utf-8")
+    out = tmp_path / "flat.docx"
+    generate_word_from_md(str(md_root), str(out), {"2.1": "2.1 发展背景", "2.1.1": "2.1.1 空间转变"})
+    doc = Document(str(out))
+    texts = [p.text for p in doc.paragraphs]
+    assert "2.1 发展背景" in texts
+    assert "2.1.1 空间转变" in texts
+    assert any("文献一" in t and "张三" in t for t in texts)
+    assert "原文A。" in texts
+
+
 def test_parse_list_style_missing_usage_skipped():
     assert parse_list_style("- **原文内容**：只有原文没有用途。") == []
 
