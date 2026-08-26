@@ -70,7 +70,19 @@ python cli.py analyze \
   --topic "你的论文主题"
 ```
 
-### 2. organize — 按 Excel 归类结果复制 PDF 到章节目录
+### 2. screen — 全库元数据筛选 (标题+摘要, 便宜快速, 先全库过一遍)
+
+```bash
+python cli.py screen \
+  --meta zotero_meta.json \
+  --sections-file examples/sections.example.json \
+  --topic "你的论文主题" \
+  --output 筛选清单.xlsx
+```
+
+输出 `标题/相关小节/等级 (A/B/C)` 三列, 直接供 from-list 使用; 不相关条目不进清单。
+
+### 3. organize — 按 Excel 归类结果复制 PDF 到章节目录
 
 ```bash
 python cli.py organize \

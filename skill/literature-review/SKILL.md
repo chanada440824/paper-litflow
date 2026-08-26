@@ -60,7 +60,23 @@ description: Runs the paper-litflow literature-review pipeline (analyze → orga
 
 用户提供不完整时，用默认值继续并说明。
 
-### 1. analyze — 批量分析生成 Excel 归类
+### 1. screen — 全库元数据筛选（可选，推荐先跑）
+
+当文献在 Zotero 且用户要"扫整个文献库"时，先用元数据便宜全筛一遍，再走后续：
+
+```bash
+python cli.py screen \
+  --meta "<zotero_meta.json>" \
+  --sections-file "<章节配置>" \
+  --topic "<论文主题，可省略>" \
+  --output "<筛选清单.xlsx>"
+```
+
+- 输入是元数据 JSON（标题/年份/作者/摘要），约 ¥0.3/300 条
+- 输出 `标题/相关小节/等级` 三列，直接喂 from-list；不相关不列出
+- 之后 from-list 用 `--grades "A,B"` 只取 A/B 抽取
+
+### 2. analyze — 批量分析生成 Excel 归类
 
 ```bash
 python cli.py analyze \

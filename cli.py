@@ -21,6 +21,7 @@ from paper_litflow import extract as extract_cmd
 from paper_litflow import extract_v2 as extract_v2_cmd
 from paper_litflow import from_list as from_list_cmd
 from paper_litflow import export_docx as export_cmd
+from paper_litflow import screen as screen_cmd
 
 
 def main() -> int:
@@ -94,6 +95,17 @@ def main() -> int:
     p_fl.add_argument("--list-out", default=None, help="清单 Markdown 输出路径 (默认 target-root/文献清单.md)")
     p_fl.add_argument("--skip-copy", action="store_true", help="不复制 PDF, 只生成清单 (链接制交付)")
     p_fl.set_defaults(func=from_list_cmd.run)
+
+    # ---- screen ----
+    p_screen = sub.add_parser("screen", help="全库元数据筛选: 标题+摘要批量分配小节与 A/B/C 等级, 输出 from-list 清单")
+    p_screen.add_argument("--meta", required=True, help="Zotero 元数据 JSON (含 标题/年份/作者/摘要)")
+    p_screen.add_argument("--sections-file", required=True, help="小节配置 JSON {编号: 标题}")
+    p_screen.add_argument("--topic", default="", help="论文主题 (注入 prompt)")
+    p_screen.add_argument("--output", required=True, help="输出 xlsx (标题/相关小节/等级)")
+    p_screen.add_argument("--batch", type=int, default=5, help="每批文献条数 (默认 5)")
+    p_screen.add_argument("--model", default="deepseek-chat")
+    p_screen.add_argument("--env-file", default=None)
+    p_screen.set_defaults(func=screen_cmd.run)
 
     # ---- export ----
     p_export = sub.add_parser("export", help="将摘抄 Markdown 目录导出为 Word 文档")
