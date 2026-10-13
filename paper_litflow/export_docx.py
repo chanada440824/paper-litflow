@@ -161,7 +161,7 @@ def generate_word_from_md(md_root: str, output_docx: str, sections=None):
     # 收集顶层 2.x 目录, 兼容 2.x / 2.x.y / 嵌套 2.x>2.x.y 三种布局
     top_dirs = sorted(
         d for d in os.listdir(md_root)
-        if os.path.isdir(os.path.join(md_root, d)) and re.match(r"^2\.\d", d)
+        if os.path.isdir(os.path.join(md_root, d)) and re.match(r"^\d\.\d", d)
     )
     chapters = {}
     for d in top_dirs:
@@ -178,7 +178,7 @@ def generate_word_from_md(md_root: str, output_docx: str, sections=None):
         if ch["path"]:
             for d in sorted(os.listdir(ch["path"])):
                 p = os.path.join(ch["path"], d)
-                if os.path.isdir(p) and re.match(r"^2\.\d+\.\d+", d):
+                if os.path.isdir(p) and re.match(r"^\d\.\d+\.\d+", d):
                     scode = d.split(" ", 1)[0]
                     if not any(s[0] == scode for s in ch["subs"]):
                         ch["subs"].append((scode, p, d))
