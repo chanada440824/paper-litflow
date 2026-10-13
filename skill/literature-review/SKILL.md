@@ -7,13 +7,40 @@ description: Runs the paper-litflow literature-review pipeline (analyze → orga
 
 本 skill 驱动 `paper-litflow` 工具（Python CLI）：批量分析论文 PDF → 按论文章节归类 → 章节化摘抄 → 导出 Word。全程只读用户指定的输入目录，输出到用户指定位置；**不自动执行任何命令之外的动作**。
 
+## 安装 / 获取项目（首次使用必看）
+
+> 本 skill 只是"说明书",真正干活的是 `paper-litflow` 项目(一个 Python CLI)。所以别人要用,**必须先把项目和依赖装好**,光有 SKILL.md 跑不起来。
+
+**第 1 步 · 获取项目(含本 skill)**
+```bash
+git clone https://github.com/chanada440824/paper-litflow
+cd paper-litflow
+```
+
+**第 2 步 · 安装 Python 依赖**(建议 Python 3.9+)
+```bash
+pip install -r requirements.txt
+```
+
+**第 3 步 · 配置 API Key**
+在项目根目录新建 `.env`,写入:
+```
+DEEPSEEK_API_KEY=你的key
+```
+(未配置时所有命令会报错提示,如实转达即可)
+
+**第 4 步 · 把本 skill 装进你的 AI agent**
+- 把 `skill/literature-review/` 整个文件夹,放到你所用的 AI agent 的 **skills 目录**中,例如:
+  - Claude Code / OpenCode 等:放到 agent 的 skills 目录(如 `~/.config/<agent>/skills/`)
+  - DeepSeek Harness(DSH):放到 `.agents/skills/`
+- 放好后,agent 在你说"帮我跑文献综述"时就能自动加载本 skill。
+
 ## 前置条件
 
-1. 项目已克隆并安装依赖：`pip install -r requirements.txt`
-2. `.env` 已配置 `DEEPSEEK_API_KEY`（未配置时所有命令会报错提示，如实转达即可）
-3. 目录结构约定（原样遵循，不自行发挥）：
-   - 输入 PDF 文件夹：任意，文件名建议 `作者 - 年份 - 标题.pdf`
-   - 章节配置 JSON：`sections.json` 形式，键=编号，值=标题（参考 `examples/sections.example.json`）
+1. 已按上面完成安装(项目 + 依赖 + `.env` 里的 `DEEPSEEK_API_KEY`)
+2. 目录结构约定(原样遵循,不自行发挥):
+   - 输入 PDF 文件夹:任意,文件名建议 `作者 - 年份 - 标题.pdf`
+   - 章节配置 JSON:`sections.json` 形式,键=编号,值=标题(参考 `examples/sections.example.json`)
 
 ## 筛选标准（两层四维制，2026-08-24 起）
 
