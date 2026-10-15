@@ -11,7 +11,7 @@ dist/
 build/
 *.egg-info/
 
-# 输出文件（论文资料夹建议不入库）
+# 输出文件（表格 / 中间结果不进仓库）
 *.xlsx
 output/
 tmp/
@@ -19,4 +19,6 @@ tmp/
 # IDE
 .idea/
 .vscode/
-skill�Ż���־.md
+
+# 本地日志
+skill优化日志.md

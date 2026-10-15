@@ -178,7 +178,7 @@ python cli.py extract-v2 \
   --output-root "文献/摘抄" \
   --chapters "2.1,2.2" \
   --sections-file examples/sections.example.json \
-  --keywords-file examples/keywords.json \
+  --keywords-file examples/keywords.example.json \
   --topic "你的论文主题"
 ```
 
