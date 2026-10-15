@@ -90,7 +90,7 @@ cp .env.example .env   # 然后填入你的 DEEPSEEK_API_KEY
 
 **三点记忆**：
 1. 两条路在「文献/已归类」处**汇合**——A 用 `analyze`（AI 读全文判断），B 用 `screen` + `from-list`（读摘要筛 + 免费复制）。
-2. 只有 **3 处花钱**：`analyze`、`screen`、`extract-v2`；`organize` / `from-list` / `export` 全是 🆓。
+2. **花钱的只有两处**：**归类**（`analyze` 或 `screen` 二选一）+ **摘抄**（`extract-v2` / `extract`）；`organize` / `from-list` / `export` 全是 🆓。
 3. **大库走 B**：先便宜筛 → 只对 A/B 摘 → 省 5~10 倍。
 
 ### 推荐流程（大库：几十 ~ 上百篇）——"先筛后摘"
@@ -242,6 +242,19 @@ python cli.py export \
 - 先小批量试 3~5 篇看成本，再放量
 - 断点续跑：`extract-v2` 自带 `state.json`，中断重跑只处理未完成条目
 
+### 能用订阅额度代替 API 吗？
+
+**跑本 CLI → 不行；让 AI agent 直接做 → 可以。**
+
+- `paper-litflow` 是 **Python 脚本**，**只能调 API key**——**订阅额度拿不到**（订阅只给 ChatGPT / Claude Code / Codex 这类**交互式助手**，脚本调不到）。
+- 想用**订阅额度**（不花 API 钱）：**别跑 CLI**，直接把 PDF 丢给 agent（Codex 登 ChatGPT 订阅 / Claude Code），让它**按格式直接摘抄**。
+- 代价：**丢掉 CLI 的"逐字校验 + 页码 + 断点 + 关键词预检"**，量大时吃力、质量参差。
+
+| 方式 | 用什么额度 | 防幻觉 / 断点 |
+|---|---|---|
+| 跑 `paper-litflow` CLI | API（按量付费）| ✅ |
+| 让 agent 直接做（不走 CLI）| **订阅额度** | ❌ |
+
 ### 长文 / 学位论文
 
 - 每条摘抄**强制逐字原文 + 页码**，转述 / 编造本地淘汰，可回溯核对
@@ -285,7 +298,7 @@ paper-litflow/
 
 - **API key 只在环境变量 / .env 中读取**，源码永不出现密钥
 - 文件名约定：`作者 - 年份 - 标题.pdf` 或 `作者 - 标题.pdf`（analyze/extract 自动解析作者、年份）
-- 每篇 PDF 默认截取前 8000 字符（`--max-chars` 可调，成本控制）
+- 每篇 PDF 默认截取前 8000 字符（`extract-v2` 为 9000；`--max-chars` 可调，成本控制）
 - 摘抄间 `time.sleep(1)` 限速，避免触发 API 限流
 - 输出格式约束：严格 JSON（analyze）、Markdown 引用块（extract）——已内置容错解析
 
