@@ -38,6 +38,12 @@ description: Runs the paper-litflow literature-review pipeline (screen/analyze �
 
 > 规则：**默认 `extract-v2`**；只有当用户**明确想省钱**、且文献是**简单期刊短文**时，才改用 `extract`。拿不准就用 v2。
 
+**两个实用开关（`extract-v2`）**：
+- **`--keywords-file` 页级定位**：只把**命中关键词的页**（`--context-pages` 控制前后上下文）送 LLM → **学位论文只摘相关部分**（不再被整篇 9000 字符截断）。
+- **`--ocr`**：扫描件（无文字层）用 Tesseract 补齐（需装 Tesseract + `chi_sim`；慢、会认错字，按需开）。
+
+**换模型 / 本地 Ollama**：`extract-v2` 等命令支持 `--model` / `--base-url`（或环境变量 `PAPER_LITFLOW_MODEL` / `PAPER_LITFLOW_BASE_URL`）——可指向 `http://localhost:11434/v1` 用本地模型（**零 API 成本、仍保留逐字校验/断点**）。
+
 ## 摘抄 prompt（内置在 CLI；不用 CLI 时可直接照用）
 
 > 下面两段是 CLI **内置、发给模型**的提示词（见 `paper_litflow/extract_v2.py` / `extract.py`）。
@@ -148,7 +154,7 @@ DEEPSEEK_API_KEY=你的key
 2. **理论类文献被 D2 误压**：纯理论著作研究对象得分低是设计使然，复核时人工兜底
 3. **无摘要的条目**：元数据阶段无法可靠判断，标「待定」交人工，不要硬评
 4. **扫描版 PDF**：无文本层会被自动跳过并记入重试清单，需 OCR 后重跑
-5. **长文 / 学位论文**：`--max-chars`（`extract-v2` 默认 9000 字符）会**截断长文**——学位论文几十上百页时只读到开头几页，需**调大 `--max-chars`** 或**只送相关章节**
+5. **长文 / 学位论文**：`--max-chars`（`extract-v2` 默认 9000 字符）会**截断长文**——学位论文几十上百页时只读到开头几页 → 用 **`--keywords-file` 页级定位**（只送命中关键词的页）或调大 `--max-chars`；扫描件加 `--ocr`
 6. **增量与重试**：`analyze --incremental` 只算新文件；`extract-v2` 的零摘抄条目不锁定状态、重跑即自动重试，失败明细见 `重试清单.csv`
 7. **成本参考**：元数据初筛约 ¥0.3/300 条；全文摘抄约 ¥0.05~0.1/篇（`deepseek-chat`，视篇幅/是否反证）
 

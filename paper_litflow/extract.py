@@ -1,12 +1,11 @@
-"""extract 命令: 按章节目录结构逐篇摘抄, 输出 Markdown。"""
+"""extract 命令: 按章节目录结构逐篇摘抄, 输出 Markdown(旧版, 比 v2 少一次反证校验)。"""
 
 import os
 import time
 
-from openai import OpenAI
 from tqdm import tqdm
 
-from . import config
+from . import config, pdf_utils
 from .pdf_utils import extract_text_from_pdf
 
 
@@ -32,10 +31,13 @@ def build_prompt(topic: str, max_excerpts: int, section_code: str, section_title
 """
 
 
-def analyze_pdf(client, pdf_path: str, model: str, temperature: float, max_chars: int, max_excerpts: int, section_code: str, section_title: str, topic: str):
-    text = extract_text_from_pdf(pdf_path, max_chars)
+def analyze_pdf(client, pdf_path: str, model: str, temperature: float, max_chars: int,
+                max_excerpts: int, section_code: str, section_title: str, topic: str,
+                ocr: bool = False):
+    """返回 (摘抄文本, (in_tokens, out_tokens)); 失败返回 (None, (0,0))。"""
+    text = extract_text_from_pdf(pdf_path, max_chars, ocr=ocr)
     if not text:
-        return None
+        return None, (0, 0)
 
     prompt = build_prompt(topic, max_excerpts, section_code, section_title) + text
 
@@ -46,10 +48,13 @@ def analyze_pdf(client, pdf_path: str, model: str, temperature: float, max_chars
             temperature=temperature,
             max_tokens=2000,
         )
-        return response.choices[0].message.content.strip()
+        usage = getattr(response, "usage", None)
+        in_tok = getattr(usage, "prompt_tokens", 0) or 0
+        out_tok = getattr(usage, "completion_tokens", 0) or 0
+        return response.choices[0].message.content.strip(), (in_tok, out_tok)
     except Exception as e:
         print(f"  API 调用失败: {e}")
-        return None
+        return None, (0, 0)
 
 
 def run(args) -> int:
@@ -57,8 +62,9 @@ def run(args) -> int:
         print(f"根目录不存在: {args.pdf_root}")
         return 1
 
-    api_key = config.get_api_key(args.env_file)
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
+    model = config.resolve_model(getattr(args, "model", None), args.env_file)
+    ocr = getattr(args, "ocr", False)
+    client = config.make_client(args.env_file, getattr(args, "base_url", None))
     sections = config.load_sections(args.sections_file)
     chapters = [c.strip() for c in args.chapters.split(",") if c.strip()]
 
@@ -73,6 +79,7 @@ def run(args) -> int:
         return 1
 
     os.makedirs(args.output_root, exist_ok=True)
+    tot_in, tot_out = 0, 0
 
     for chapter in chapter_dirs:
         chapter_path = os.path.join(args.pdf_root, chapter)
@@ -96,16 +103,18 @@ def run(args) -> int:
 
             section_code, section_title = sub.split(maxsplit=1) if " " in sub else (sub, sub)
 
-            for pdf_path in pdf_files:
+            for pdf_path in tqdm(pdf_files, desc=sub):
                 base_name = os.path.basename(pdf_path).replace(".pdf", ".md")
                 output_file = os.path.join(args.output_root, chapter, sub, base_name)
                 os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
-                print(f"      处理: {os.path.basename(pdf_path)}")
-                result = analyze_pdf(
-                    client, pdf_path, args.model, args.temperature,
+                result, usage = analyze_pdf(
+                    client, pdf_path, model, args.temperature,
                     args.max_chars, args.max_excerpts, section_code, section_title, args.topic,
+                    ocr=ocr,
                 )
+                tot_in += usage[0]
+                tot_out += usage[1]
                 if result and result.strip():
                     with open(output_file, "w", encoding="utf-8") as f:
                         f.write(f"# {os.path.basename(pdf_path)}\n\n{result}")
@@ -113,5 +122,5 @@ def run(args) -> int:
                     print(f"        警告: {os.path.basename(pdf_path)} 未提取到有效摘抄")
                 time.sleep(1)
 
-    print("\n全部处理完成!")
+    print(f"\n全部处理完成! 本次 token: 输入 {tot_in} / 输出 {tot_out} ｜ 估算费用 ≈ ¥{config.estimate_cost(tot_in, tot_out):.3f}")
     return 0

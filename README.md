@@ -6,6 +6,8 @@
 
 > 作者用它把每篇文献的处理时间从约 20 分钟缩短到 2 分钟以内（配合 DeepSeek API）。
 
+> 新手 → 看 [QUICKSTART（4 步上手）](QUICKSTART-给使用者.md)
+
 ## 安装
 
 ```bash
@@ -183,10 +185,11 @@ python cli.py extract-v2 \
 ```
 
 相比 v1 的升级：
-- 文本按页注入 **【P页码】** 标记（模型必须回报出处页）
-- 可选**关键词预检**（未命中小节关键词的 PDF 直接跳过，省 token）
+- 文本按页注入 **【P页码】** 标记（页码为 PDF **真实页号**；空页不错位，模型必须回报出处页）
+- **`--keywords-file` → 页级定位**：只把**命中关键词的页**（`--context-pages` 控制前后各带几页）送 LLM；整篇无命中则跳过 → **学位论文只摘相关部分**
 - 返回严格 JSON 后**本地逐字校验**，转述 / 幻觉引文直接淘汰；模糊命中降级为低 / 中置信
-- `state.json` **断点续跑**
+- **`state.json` 断点续跑**；跑完报告 **token / 估算费用**
+- **`--ocr`**：对无文字层的扫描页用 Tesseract 补齐
 
 👉 **适合学位论文、要求严、要溯源**的场景。
 
@@ -242,6 +245,27 @@ python cli.py export \
 - 先小批量试 3~5 篇看成本，再放量
 - 断点续跑：`extract-v2` 自带 `state.json`，中断重跑只处理未完成条目
 
+### 换模型 / 本地 Ollama（零成本跑全功能）
+
+接口与模型**可配置**（无需改代码）：优先级 **参数 > 环境变量 > 默认**。
+
+```bash
+# 指向本地 Ollama（零 API 成本，仍保留逐字校验/断点等全功能）
+python cli.py extract-v2 ... --base-url http://localhost:11434/v1 --model qwen2.5
+
+# 或环境变量
+export PAPER_LITFLOW_BASE_URL=http://localhost:11434/v1
+export PAPER_LITFLOW_MODEL=qwen2.5
+export PAPER_LITFLOW_API_KEY=sk-xxx      # 可选，覆盖 key（本地服务无需真 key）
+```
+
+### 扫描件 OCR
+
+无文字层的扫描件默认被跳过。加 **`--ocr`**（`analyze` / `extract` / `extract-v2`）→ 用 PyMuPDF 渲染 + **Tesseract** 识别补齐（**无需 Ghostscript**）。
+
+- 需安装 Tesseract（含中文包 `chi_sim`）；可用 `PAPER_LITFLOW_TESSERACT` / `PAPER_LITFLOW_TESSDATA` 指定路径；
+- ⚠️ OCR 较慢、且会认错字（错字引文会被逐字校验淘汰）→ **按需开启**。
+
 ### 能用订阅额度代替 API 吗？
 
 **跑本 CLI → 不行；让 AI agent 直接做 → 可以。**
@@ -258,7 +282,7 @@ python cli.py export \
 ### 长文 / 学位论文
 
 - 每条摘抄**强制逐字原文 + 页码**，转述 / 编造本地淘汰，可回溯核对
-- 但 `--max-chars`（`extract-v2` 默认 9000 字符）会**截断长文**：学位论文几十上百页时只读到开头几页 → 需**调大 `--max-chars`** 或**只送相关章节**
+- 但 `--max-chars`（`extract-v2` 默认 9000 字符）会**截断长文**：学位论文几十上百页时只读到开头几页 → **解法：用 `--keywords-file` 做页级定位**（只送命中关键词的页 + `--context-pages`），或调大 `--max-chars`
 
 ## 配套 Skill（给 AI agent 用）
 

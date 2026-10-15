@@ -1,12 +1,12 @@
 """analyze 命令: 批量分析 PDF, 按章节归类输出 Excel。"""
 
+import hashlib
 import json
 import os
 import re
 import time
 
 import pandas as pd
-from openai import OpenAI
 from tqdm import tqdm
 
 from . import config
@@ -55,11 +55,13 @@ def parse_json_response(response_text: str):
             return None
 
 
-def analyze_pdf(client, pdf_path: str, filename: str, prompt: str, sections: dict, temperature: float, model: str):
+def analyze_pdf(client, pdf_path: str, filename: str, prompt: str, sections: dict,
+                temperature: float, model: str, max_chars: int = 8000, ocr: bool = False):
+    """返回 (行字典, (in_tokens, out_tokens)); 失败返回 (None, (0,0))。"""
     author, year, title_from_filename = parse_filename_metadata(filename)
-    text = extract_text_from_pdf(pdf_path)
+    text = extract_text_from_pdf(pdf_path, max_chars, ocr=ocr)
     if not text:
-        return None
+        return None, (0, 0)
 
     full_prompt = (
         prompt
@@ -73,9 +75,12 @@ def analyze_pdf(client, pdf_path: str, filename: str, prompt: str, sections: dic
             temperature=temperature,
             response_format={"type": "json_object"},
         )
+        usage = getattr(response, "usage", None)
+        in_tok = getattr(usage, "prompt_tokens", 0) or 0
+        out_tok = getattr(usage, "completion_tokens", 0) or 0
         data = parse_json_response(response.choices[0].message.content.strip())
         if not data:
-            return None
+            return None, (in_tok, out_tok)
         row = {
             "标题": title_from_filename,
             "作者": author,
@@ -85,15 +90,14 @@ def analyze_pdf(client, pdf_path: str, filename: str, prompt: str, sections: dic
         }
         for sec in sections.keys():
             row[sec] = data.get(sec, "")
-        return row
+        return row, (in_tok, out_tok)
     except Exception as e:
         print(f"  API 调用失败: {e}")
-        return None
+        return None, (0, 0)
 
 
 def file_key(path: str) -> str:
     """文件指纹: 路径+大小+mtime 的 md5, 用于增量跳过未变化的 PDF。"""
-    import hashlib
     st = os.stat(path)
     raw = f"{os.path.abspath(path)}|{st.st_size}|{st.st_mtime_ns}"
     return hashlib.md5(raw.encode()).hexdigest()
@@ -135,8 +139,9 @@ def run(args) -> int:
         print("未找到 PDF 文件")
         return 1
 
-    api_key = config.get_api_key(args.env_file)
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
+    model = config.resolve_model(getattr(args, "model", None), args.env_file)
+    ocr = getattr(args, "ocr", False)
+    client = config.make_client(args.env_file, getattr(args, "base_url", None))
     prompt = build_prompt(sections, args.topic)
 
     # 增量模式: 输出旁的 state.json 记录已分析文件的指纹与结果行
@@ -145,6 +150,7 @@ def run(args) -> int:
     print(f"找到 {len(pdf_files)} 篇 PDF (已分析 {len(state)} 篇可复用)")
     results = []
     skipped_cache = 0
+    tot_in, tot_out = 0, 0
     for idx, filename in enumerate(tqdm(pdf_files, desc="批量分析"), 1):
         full_path = os.path.join(args.pdf_dir, filename)
         key = file_key(full_path)
@@ -154,15 +160,12 @@ def run(args) -> int:
             skipped_cache += 1
             print("  增量命中, 复用既有结果")
         else:
-            row_data = analyze_pdf(
-                client,
-                full_path,
-                os.path.basename(filename),
-                prompt,
-                sections,
-                args.temperature,
-                args.model,
+            row_data, usage = analyze_pdf(
+                client, full_path, os.path.basename(filename), prompt, sections,
+                args.temperature, model, max_chars=args.max_chars, ocr=ocr,
             )
+            tot_in += usage[0]
+            tot_out += usage[1]
             if row_data:
                 state[key] = row_data
                 save_state(args.output, state)
@@ -179,6 +182,7 @@ def run(args) -> int:
         df = df[cols]
         df.to_excel(args.output, index=False)
         print(f"\n完成, 结果已保存: {args.output} (本次增量复用 {skipped_cache} 篇)")
+        print(f"本次 token: 输入 {tot_in} / 输出 {tot_out} ｜ 估算费用 ≈ ¥{config.estimate_cost(tot_in, tot_out):.3f}")
     else:
         print("没有任何成功处理的结果")
     return 0

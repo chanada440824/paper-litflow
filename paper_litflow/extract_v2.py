@@ -1,28 +1,27 @@
-"""extract-v2 命令: 带页码、关键词预检、逐字校验与置信度标签的摘抄 (v2)。
+"""extract-v2 命令: 带页码、关键词定位、逐字校验与置信度标签的摘抄 (v2)。
 
 与 v1 (extract) 的区别:
-- 文本按页注入【P页码】标记, 模型必须回报出处页码
-- 送 LLM 前先做本地关键词预检, 未命中小节关键词的 PDF 直接跳过 (省 token)
+- 文本按页注入【P页码】标记(页码为 PDF 真实页号), 模型必须回报出处页码
+- --keywords-file 升级为【页级定位】: 只把命中关键词的页(+上下文)送 LLM, 未命中则跳过整篇
 - 返回严格 JSON 摘抄, 本地逐字校验通过才落盘; 模糊命中降级为低/中置信
-- state.json 断点续跑: 中断后重跑只处理未完成条目
+- ocr=True 时, 无文字层的扫描页用 Tesseract 补齐
+- state.json 断点续跑; 跑完报告 token / 估算费用
 """
 
-import hashlib
 import csv
+import hashlib
 import json
 import os
 import re
 import time
 
-import fitz
-from openai import OpenAI
 from tqdm import tqdm
 
-from . import config
+from . import config, pdf_utils
 from .verify import conf_label, norm_text, validate_excerpts
 
 DEFAULT_KEYWORDS = {
-    # 未提供 --keywords-json 时不做预检 (空 dict 表示跳过预检逻辑)
+    # 未提供 --keywords-json 时不做页级定位 (空 dict 表示整篇送)
 }
 
 
@@ -33,23 +32,36 @@ def load_keywords(path):
         return json.load(f)
 
 
-def pdf_pages(path):
-    """返回非空页文本列表 (下标0 = 第1页)。"""
-    doc = fitz.open(path)
-    pages = []
-    for p in doc:
-        t = p.get_text().strip()
-        if t:
-            pages.append(t)
-    doc.close()
-    return pages
+def load_pages(pdf_path, ocr=False, lang="chi_sim+eng"):
+    """返回非空页 [(页码, 文本)]（页码为 PDF 真实页号）。"""
+    pages = pdf_utils.page_texts(pdf_path, ocr=ocr, lang=lang)
+    return [(n, t) for n, t in pages if t.strip()]
+
+
+def select_pages(pages, kw, context=1):
+    """按关键词定位相关页(含前后 context 页)。
+
+    返回:
+      pages 列表(选中页) —— 提供了 kw 且命中
+      None               —— 提供了 kw 但整篇无命中(应跳过该篇)
+    """
+    if not kw:
+        return pages
+    hit = {i for i, (_, t) in enumerate(pages) if re.search(kw, t, re.IGNORECASE)}
+    if not hit:
+        return None
+    idxs = set()
+    for i in hit:
+        for j in range(max(0, i - context), min(len(pages), i + context + 1)):
+            idxs.add(j)
+    return [pages[i] for i in sorted(idxs)]
 
 
 def build_marked(pages, max_chars):
-    """拼接带【P页码】标记的文本, 截断到 max_chars。"""
+    """拼接带【P真实页码】标记的文本, 截断到 max_chars。"""
     parts, total = [], 0
-    for i, t in enumerate(pages, 1):
-        piece = f"【P{i}】{t}\n"
+    for n, t in pages:
+        piece = f"【P{n}】{t}\n"
         if total + len(piece) > max_chars:
             break
         parts.append(piece)
@@ -81,24 +93,28 @@ def topic_line_inner(topic):
     return f"你正在协助撰写硕士论文《{topic}》"
 
 
-def call_llm(client, prompt, temperature, retries=2):
+def call_llm(client, model, prompt, temperature, retries=2):
+    """调用模型; 返回 (excerpts, (in_tokens, out_tokens)); 失败返回 (None, (0,0))。"""
     for a in range(retries + 1):
         try:
             resp = client.chat.completions.create(
-                model="deepseek-chat",
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
                 response_format={"type": "json_object"},
             )
+            usage = getattr(resp, "usage", None)
+            in_tok = getattr(usage, "prompt_tokens", 0) or 0
+            out_tok = getattr(usage, "completion_tokens", 0) or 0
             txt = resp.choices[0].message.content.strip()
             if txt.startswith("```"):
                 txt = txt.strip("`").lstrip("json").strip()
-            return json.loads(txt).get("excerpts", [])
+            return json.loads(txt).get("excerpts", []), (in_tok, out_tok)
         except Exception:
             if a == retries:
-                return None
+                return None, (0, 0)
             time.sleep(2)
-    return None
+    return None, (0, 0)
 
 
 def iter_pdf_files(pdf_root, chapters):
@@ -121,9 +137,11 @@ def run(args) -> int:
         return 1
 
     sections = config.load_sections(args.sections_file)
-    keywords = load_keywords(args.keywords_file)
-    client = OpenAI(api_key=config.get_api_key(args.env_file),
-                    base_url="https://api.deepseek.com/v1")
+    keywords = load_keywords(getattr(args, "keywords_file", None))
+    model = config.resolve_model(getattr(args, "model", None), args.env_file)
+    ocr = getattr(args, "ocr", False)
+    context = getattr(args, "context_pages", 1)
+    client = config.make_client(args.env_file, getattr(args, "base_url", None))
     os.makedirs(args.output_root, exist_ok=True)
     state_path = args.state_file or os.path.join(args.output_root, ".extract_v2_state.json")
     state = {}
@@ -132,6 +150,7 @@ def run(args) -> int:
             state = json.load(f)
 
     stats = {"ok": 0, "empty": 0, "precheck_skip": 0, "no_text": 0, "resumed": 0, "api_fail": 0}
+    tot_in, tot_out = 0, 0
     retry_rows = []  # 失败/零摘抄条目 -> 重试清单 CSV
     items = list(iter_pdf_files(args.pdf_root, [c.strip() for c in args.chapters.split(",") if c.strip()]))
 
@@ -144,34 +163,37 @@ def run(args) -> int:
             continue
 
         try:
-            pages = pdf_pages(pdf_path)
+            all_pages = load_pages(pdf_path, ocr=ocr)
         except Exception as e:
             print(f"  PDF 打开失败 {os.path.basename(pdf_path)}: {e}")
             stats["no_text"] += 1
             retry_rows.append({"文件": os.path.basename(pdf_path), "小节": sec, "原因": f"打开失败: {e}"})
             continue
-        if not pages:
-            print(f"  无文本层(扫描件?), 跳过: {os.path.basename(pdf_path)}")
+        if not all_pages:
+            print(f"  无文本层(扫描件?), 跳过: {os.path.basename(pdf_path)}"
+                  + ("" if ocr else "  (可加 --ocr)"))
             stats["no_text"] += 1
-            retry_rows.append({"文件": os.path.basename(pdf_path), "小节": sec, "原因": "无文本层(扫描件)"})
+            retry_rows.append({"文件": os.path.basename(pdf_path), "小节": sec,
+                               "原因": "无文本层(扫描件)" + ("" if ocr else ", 未开 --ocr")})
             continue
 
         kw = keywords.get(sec) or keywords.get(sec.rstrip(".0123456789")) or ""
-        if kw:
-            joined_raw = "\n".join(pages)
-            if not re.search(kw, joined_raw, re.IGNORECASE):
-                print(f"  预检未命中关键词, 跳过: {os.path.basename(pdf_path)}")
-                stats["precheck_skip"] += 1
-                retry_rows.append({"文件": os.path.basename(pdf_path), "小节": sec, "原因": "关键词预检未命中"})
-                continue
+        sel = select_pages(all_pages, kw, context)
+        if sel is None:
+            print(f"  预检未命中关键词, 跳过: {os.path.basename(pdf_path)}")
+            stats["precheck_skip"] += 1
+            retry_rows.append({"文件": os.path.basename(pdf_path), "小节": sec, "原因": "关键词页级定位未命中"})
+            continue
 
-        marked = build_marked(pages, args.max_chars)
-        pages_norm = {i + 1: norm_text(t) for i, t in enumerate(pages)}
-        joined_norm = norm_text("".join(pages))
+        marked = build_marked(sel, args.max_chars)
+        pages_norm = {n: norm_text(t) for n, t in all_pages}
+        joined_norm = norm_text("".join(t for _, t in all_pages))
         title = os.path.basename(pdf_path).replace(".pdf", "")
         prompt = build_prompt(args.topic, args.max_excerpts, sec, sec_title, title, marked)
 
-        raw = call_llm(client, prompt, args.temperature)
+        raw, usage = call_llm(client, model, prompt, args.temperature)
+        tot_in += usage[0]
+        tot_out += usage[1]
         if raw is None:
             print(f"  API 失败放弃: {title[:30]}")
             stats["api_fail"] += 1
@@ -221,5 +243,6 @@ def run(args) -> int:
 
     print("\n=== extract-v2 完成 ===")
     print(json.dumps(stats, ensure_ascii=False))
+    print(f"本次 token: 输入 {tot_in} / 输出 {tot_out} ｜ 估算费用 ≈ ¥{config.estimate_cost(tot_in, tot_out):.3f}")
     print(f"state: {state_path}")
     return 0

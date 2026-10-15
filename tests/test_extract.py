@@ -51,15 +51,16 @@ class _FakeClient:
 def test_analyze_pdf_returns_stripped_content(monkeypatch):
     from paper_litflow import extract
 
-    monkeypatch.setattr(extract, "extract_text_from_pdf", lambda p, max_chars=8000: "正文内容")
+    monkeypatch.setattr(extract, "extract_text_from_pdf", lambda p, max_chars=8000, **kw: "正文内容")
     client = _FakeClient("  > 原文句子。\n\n**用途**：用于 2.1 的引用。  ")
-    result = extract.analyze_pdf(client, "x.pdf", "deepseek-chat", 0.3, 8000, 5, "2.1", "绪论", "主题")
+    result, _usage = extract.analyze_pdf(client, "x.pdf", "deepseek-chat", 0.3, 8000, 5, "2.1", "绪论", "主题")
     assert result == "> 原文句子。\n\n**用途**：用于 2.1 的引用。"
 
 
 def test_analyze_pdf_empty_text_returns_none(monkeypatch):
     from paper_litflow import extract
 
-    monkeypatch.setattr(extract, "extract_text_from_pdf", lambda p, max_chars=8000: "")
+    monkeypatch.setattr(extract, "extract_text_from_pdf", lambda p, max_chars=8000, **kw: "")
     client = _FakeClient("whatever")
-    assert extract.analyze_pdf(client, "x.pdf", "deepseek-chat", 0.3, 8000, 5, "2.1", "绪论", "主题") is None
+    result, _usage = extract.analyze_pdf(client, "x.pdf", "deepseek-chat", 0.3, 8000, 5, "2.1", "绪论", "主题")
+    assert result is None

@@ -5,11 +5,16 @@ Usage:
     python cli.py organize   --excel <xlsx> --source-pdf <dir> --target-root <dir>
     python cli.py extract    --pdf-root <dir> --output-root <dir> [--chapters "2.1,2.2"] [--sections-file sections.json]
     python cli.py extract-v2 --pdf-root <dir> --output-root <dir> [--chapters "1.3.1,1.3.2"] [--keywords-file kw.json]
-                             (页码出处 + 关键词预检 + 逐字校验 + 置信度标签 + 断点续跑)
+                             (页码出处 + 关键词页级定位 + 逐字校验 + 置信度标签 + 断点续跑)
     python cli.py from-list  --list-file <xlsx|csv> --pdf-index <json> --target-root <dir>
                              [--grades "A,B"] [--links-json links.json] [--list-out 清单.md]
                              (从筛选清单直接建章节目录, 免去 analyze/organize; 可内嵌 Zotero 链接)
+    python cli.py screen     --meta <zotero_meta.json> --sections-file sections.json --output <xlsx>
     python cli.py export     --md-root <dir> --output <docx>
+
+通用 LLM 参数(analyze/screen/extract/extract-v2): --model, --base-url
+(默认取环境变量 PAPER_LITFLOW_MODEL / PAPER_LITFLOW_BASE_URL, 再取 deepseek-chat / https://api.deepseek.com/v1)
+扫描件 OCR: analyze/extract/extract-v2 支持 --ocr (用 Tesseract)
 """
 
 import argparse
@@ -22,6 +27,17 @@ from paper_litflow import extract_v2 as extract_v2_cmd
 from paper_litflow import from_list as from_list_cmd
 from paper_litflow import export_docx as export_cmd
 from paper_litflow import screen as screen_cmd
+
+
+def _add_llm_args(p, with_ocr=False):
+    """给需要调用模型的子命令加统一参数。"""
+    p.add_argument("--model", default=None,
+                   help="模型名 (默认取 PAPER_LITFLOW_MODEL 或 deepseek-chat)")
+    p.add_argument("--base-url", default=None,
+                   help="接口地址 (默认取 PAPER_LITFLOW_BASE_URL 或 https://api.deepseek.com/v1; 可指向 Ollama 等)")
+    if with_ocr:
+        p.add_argument("--ocr", action="store_true",
+                       help="对无文字层的扫描页用 Tesseract OCR 补齐 (需安装 Tesseract)")
 
 
 def main() -> int:
@@ -37,12 +53,12 @@ def main() -> int:
     p_analyze.add_argument("--output", required=True, help="输出 Excel 路径")
     p_analyze.add_argument("--sections-file", default=None, help="章节配置 JSON (默认内置示例)")
     p_analyze.add_argument("--topic", default="", help="论文主题 (注入 prompt, 可为空)")
-    p_analyze.add_argument("--model", default="deepseek-chat", help="模型名 (默认 deepseek-chat)")
     p_analyze.add_argument("--temperature", type=float, default=0.3)
     p_analyze.add_argument("--max-chars", type=int, default=8000, help="每篇 PDF 提取的最大字符数")
     p_analyze.add_argument("--recursive", action="store_true", help="递归遍历子目录收集 PDF")
     p_analyze.add_argument("--incremental", action="store_true", help="增量模式: 复用 <output>.state.json 中已分析结果, 只处理新增/变化文件")
     p_analyze.add_argument("--env-file", default=None, help=".env 文件路径 (默认自动查找)")
+    _add_llm_args(p_analyze, with_ocr=True)
     p_analyze.set_defaults(func=analyze_cmd.run)
 
     # ---- organize ----
@@ -60,26 +76,28 @@ def main() -> int:
     p_extract.add_argument("--chapters", default="2.1,2.2,2.3", help="处理的章节前缀, 逗号分隔")
     p_extract.add_argument("--sections-file", default=None, help="章节配置 JSON (默认内置示例)")
     p_extract.add_argument("--topic", default="", help="论文主题 (注入 prompt, 可为空)")
-    p_extract.add_argument("--model", default="deepseek-chat", help="模型名 (默认 deepseek-chat)")
     p_extract.add_argument("--temperature", type=float, default=0.3)
     p_extract.add_argument("--max-chars", type=int, default=8000, help="每篇 PDF 提取的最大字符数")
     p_extract.add_argument("--max-excerpts", type=int, default=5, help="每篇论文最多摘抄条数")
     p_extract.add_argument("--env-file", default=None, help=".env 文件路径 (默认自动查找)")
+    _add_llm_args(p_extract, with_ocr=True)
     p_extract.set_defaults(func=extract_cmd.run)
 
     # ---- extract-v2 ----
-    p_ev2 = sub.add_parser("extract-v2", help="摘抄 v2: 页码出处 + 关键词预检 + 逐字校验 + 置信度标签")
+    p_ev2 = sub.add_parser("extract-v2", help="摘抄 v2: 页码出处 + 关键词页级定位 + 逐字校验 + 置信度标签")
     p_ev2.add_argument("--pdf-root", required=True, help="已归类的 PDF 根目录 (章节/小节结构)")
     p_ev2.add_argument("--output-root", required=True, help="Markdown 输出根目录")
     p_ev2.add_argument("--chapters", default="2.1,2.2", help="处理的章节前缀, 逗号分隔")
     p_ev2.add_argument("--sections-file", default=None, help="章节配置 JSON (默认内置示例)")
-    p_ev2.add_argument("--keywords-file", default=None, help="小节关键词 JSON {编号: 正则}, 提供则启用预检")
+    p_ev2.add_argument("--keywords-file", default=None, help="小节关键词 JSON {编号: 正则}; 提供则只把命中关键词的页送 LLM")
+    p_ev2.add_argument("--context-pages", type=int, default=1, help="关键词命中页前后各带几页上下文 (默认 1)")
     p_ev2.add_argument("--topic", default="", help="论文主题 (注入 prompt)")
     p_ev2.add_argument("--temperature", type=float, default=0.1)
     p_ev2.add_argument("--max-chars", type=int, default=9000, help="每篇 PDF 注入的最大字符数(含页码标记)")
     p_ev2.add_argument("--max-excerpts", type=int, default=5)
     p_ev2.add_argument("--state-file", default=None, help="断点续跑状态文件 (默认 <output-root>/.extract_v2_state.json)")
     p_ev2.add_argument("--env-file", default=None)
+    _add_llm_args(p_ev2, with_ocr=True)
     p_ev2.set_defaults(func=extract_v2_cmd.run)
 
     # ---- from-list ----
@@ -103,8 +121,8 @@ def main() -> int:
     p_screen.add_argument("--topic", default="", help="论文主题 (注入 prompt)")
     p_screen.add_argument("--output", required=True, help="输出 xlsx (标题/相关小节/等级)")
     p_screen.add_argument("--batch", type=int, default=5, help="每批文献条数 (默认 5)")
-    p_screen.add_argument("--model", default="deepseek-chat")
     p_screen.add_argument("--env-file", default=None)
+    _add_llm_args(p_screen)
     p_screen.set_defaults(func=screen_cmd.run)
 
     # ---- export ----

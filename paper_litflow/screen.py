@@ -106,17 +106,20 @@ def run(args) -> int:
         print("元数据为空")
         return 1
 
-    from openai import OpenAI
-    client = OpenAI(api_key=config.get_api_key(args.env_file),
-                    base_url="https://api.deepseek.com/v1")
+    model = config.resolve_model(getattr(args, "model", None), args.env_file)
+    client = config.make_client(args.env_file, getattr(args, "base_url", None))
+    usage_acc = [0, 0]
 
     def llm_func(prompt):
         resp = client.chat.completions.create(
-            model=args.model,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             response_format={"type": "json_object"},
         )
+        u = getattr(resp, "usage", None)
+        usage_acc[0] += getattr(u, "prompt_tokens", 0) or 0
+        usage_acc[1] += getattr(u, "completion_tokens", 0) or 0
         return parse_response(resp.choices[0].message.content)
 
     results = screen_items(items, sections, args.topic, args.batch, llm_func)
@@ -128,4 +131,5 @@ def run(args) -> int:
     from collections import Counter
     print("等级分布:", dict(Counter(df["等级"])))
     print("清单已写:", args.output)
+    print(f"本次 token: 输入 {usage_acc[0]} / 输出 {usage_acc[1]} ｜ 估算费用 ≈ ¥{config.estimate_cost(usage_acc[0], usage_acc[1]):.3f}")
     return 0
